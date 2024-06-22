@@ -1,6 +1,6 @@
-const { Stream } = require("stream");
+const { readFile, unlink } = require("fs/promises");
+const { Stream, Readable } = require("stream");
 const { spawn } = require("child_process");
-const { writeFile, readFile, unlink } = require("fs/promises");
 const { tmpdir } = require("os");
 const { resolve } = require("path");
 const embedMetadata = require("./metadata");
@@ -31,70 +31,71 @@ async function createSticker(input, options = {}) {
       throw new Error("The ffmpeg path is not specified.");
     }
 
-    const inputPath = resolve(tmpdir(), `${Date.now()}.${type.ext}`);
-    const outputPath = resolve(tmpdir(), `${Date.now()}.webp`);
+    const stream = new Readable();
+    stream.push(input);
+    stream.push(null);
 
-    await writeFile(inputPath, input);
+    const output = resolve(tmpdir(), `${Date.now()}.webp`);
 
-    const ffmpegArgs = [
-      "-i",
-      inputPath,
-      "-vcodec",
-      "libwebp",
-      "-vf",
-      "scale='iw*min(300/iw,300/ih)':'ih*min(300/iw,300/ih)',format=rgba,pad=300:300:'(300-iw)/2':'(300-ih)/2':'#00000000',setsar=1,fps=10",
-      "-loop",
-      "0",
-      "-ss",
-      "00:00:00.0",
-      "-t",
-      "00:00:06",
-      "-an",
-      "-vsync",
-      "0",
-      "-s",
-      "512:512",
-      "-qscale:v",
-      "50",
-      outputPath,
-    ];
+    try {
+      const args = [
+        "-i",
+        "-",
+        "-vcodec",
+        "libwebp",
+        "-vf",
+        "scale='iw*min(300/iw,300/ih)':'ih*min(300/iw,300/ih)',format=rgba,pad=300:300:'(300-iw)/2':'(300-ih)/2':'#00000000',setsar=1,fps=10",
+        "-loop",
+        "0",
+        "-ss",
+        "00:00:00.0",
+        "-t",
+        "00:00:05.0",
+        "-an",
+        "-vsync",
+        "0",
+        "-s",
+        "512:512",
+        "-qscale:v",
+        "50",
+        output,
+      ];
 
-    await executeFfmpeg(options.ffmpeg, ffmpegArgs);
+      await new Promise((resolve, reject) => {
+        const ffmpeg = spawn(options.ffmpeg, args);
+        stream.pipe(ffmpeg.stdin);
 
-    const sticker = await readFile(outputPath);
+        ffmpeg.stdin.on("error", () => null);
 
-    await unlink(inputPath).catch(() => null);
-    await unlink(outputPath).catch(() => null);
+        ffmpeg.on("exit", (code) => {
+          if (code === 0) {
+            resolve(true);
+          } else {
+            reject(`FFmpeg exited with code ${code}`);
+          }
+        });
+      });
 
-    return await embedMetadata(sticker, options.metadata);
+      const sticker = await readFile(output);
+
+      return await embedMetadata(sticker, options.metadata);
+    } catch (error) {
+      throw error;
+    } finally {
+      unlink(output).catch(() => null);
+    }
   } else {
     throw new Error("The file is neither a valid image nor a video.");
   }
 }
 
-async function streamToBuffer(stream) {
+function streamToBuffer(stream) {
   return new Promise((resolve, reject) => {
     const chunks = [];
 
     stream.on("data", (chunk) => chunks.push(chunk));
     stream.on("end", () => resolve(Buffer.concat(chunks)));
-    stream.on("error", (err) => reject(err));
-  });
-}
-
-async function executeFfmpeg(ffmpegPath, args) {
-  return new Promise((resolve, reject) => {
-    const ffmpegProcess = spawn(ffmpegPath, args);
-
-    ffmpegProcess.on("exit", (code) => {
-      if (code === 0) {
-        resolve(true);
-      } else {
-        reject(new Error(`Ffmpeg exited with code ${code}`));
-      }
-    });
-
-    ffmpegProcess.on("error", (err) => reject(err));
+    stream.on("error", (error) => reject(error));
   });
 }
 

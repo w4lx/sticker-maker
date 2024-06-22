@@ -1,6 +1,6 @@
 {
   "name": "sticker-maker",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "main": "index.js",
   "keywords": [
     "whatsapp-stickers",
