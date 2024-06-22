@@ -1,7 +1,8 @@
 const { Stream } = require("stream");
 const { spawn } = require("child_process");
-const { writeFile, readFile } = require("fs/promises");
+const { writeFile, readFile, unlink } = require("fs/promises");
 const { tmpdir } = require("os");
+const { resolve } = require("path");
 const embedMetadata = require("./metadata");
 const sharp = require("sharp");
 
@@ -10,34 +11,28 @@ async function createSticker(input, options = {}) {
     throw new Error("An input file was not provided.");
   }
 
-  // Convertir stream legible a buffer si es necesario
   if (input instanceof Stream) {
     input = await streamToBuffer(input);
   }
 
-  // Validar que options.input sea un buffer
   if (!Buffer.isBuffer(input)) {
     throw new Error("The input file is not a valid buffer.");
   }
 
   const { fileTypeFromBuffer } = await import("file-type");
 
-  // Determinar el tipo de archivo
   const type = await fileTypeFromBuffer(input);
 
-  // Procesar según el tipo de archivo
   if (type.mime.includes("image")) {
-    // Convertir imagen a formato WebP con sharp
     const sticker = await sharp(input).webp().toBuffer();
     return await embedMetadata(sticker, options.metadata);
   } else if (type.mime.includes("video")) {
-    // Convertir video a formato WebP con ffmpeg
     if (!options.ffmpeg) {
       throw new Error("The ffmpeg path is not specified.");
     }
 
-    const inputPath = `${tmpdir()}/${Date.now()}.mp4`;
-    const outputPath = `${tmpdir()}/${Date.now()}.webp`;
+    const inputPath = resolve(tmpdir(), `${Date.now()}.${type.ext}`);
+    const outputPath = resolve(tmpdir(), `${Date.now()}.webp`);
 
     await writeFile(inputPath, input);
 
@@ -67,6 +62,10 @@ async function createSticker(input, options = {}) {
     await executeFfmpeg(options.ffmpeg, ffmpegArgs);
 
     const sticker = await readFile(outputPath);
+
+    await unlink(inputPath).catch(() => null);
+    await unlink(outputPath).catch(() => null);
+
     return await embedMetadata(sticker, options.metadata);
   } else {
     throw new Error("The file is neither a valid image nor a video.");
